@@ -66,7 +66,6 @@ public class PetWarper {
             // Sitting mobs should stay put like good girls
             boolean isSitting = isSitting(pet);
             if (isWild || isLeashed || isSitting) {
-                System.out.println("Pet isLeashed: " + isLeashed + ", isSitting: " + isSitting);
                 petInfoMap.remove(entity.getUniqueID()); // ??
                 continue;
             }
