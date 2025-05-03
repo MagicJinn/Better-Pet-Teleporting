@@ -1,4 +1,4 @@
-package com.example.PetLoad;
+package com.example.BetterPetTeleporting;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.EntityTameable;
@@ -169,7 +169,7 @@ public class PetWarper {
 
     // Custom teleport function while preventing portal entry
     private void changePetDimension(EntityTameable pet, int dimension) {
-        pet.getEntityData().setBoolean("PetLoad_AllowDimChange", true);
+        pet.getEntityData().setBoolean("BPT_AllowDimChange", true);
 
         MinecraftServer server = pet.getEntityWorld().getMinecraftServer();
         WorldServer targetWorld = server.getWorld(dimension);
@@ -266,10 +266,10 @@ public class PetWarper {
 
         // Block dimension changes for pets
         if (entity instanceof EntityTameable) {
-            if (!entity.getEntityData().getBoolean("PetLoad_AllowDimChange")) {
+            if (!entity.getEntityData().getBoolean("BPT_AllowDimChange")) {
                 event.setCanceled(true);
             }
-            entity.getEntityData().setBoolean("PetLoad_AllowDimChange", false);
+            entity.getEntityData().setBoolean("BPT_AllowDimChange", false);
         }
     }
 
