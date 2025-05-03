@@ -21,13 +21,8 @@ public class PetLoad
     public void preInit(FMLPreInitializationEvent event) {
         logger = event.getModLog();
         logger.info("Pre-initializing {}", NAME);
-        ModConfig.loadConfig(event);
 
         // Register the entity chunk loader
-        EntityChunkLoader.registerChunkLoading();
-        MinecraftForge.EVENT_BUS.register(new EntityChunkLoader());
-
-        // Register configuration event handler
-        MinecraftForge.EVENT_BUS.register(ModConfig.class);
+        MinecraftForge.EVENT_BUS.register(new PetWarper());
     }
 }
