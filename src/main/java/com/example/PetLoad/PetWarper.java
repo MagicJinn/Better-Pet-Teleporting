@@ -7,9 +7,11 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.world.Teleporter;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraftforge.event.entity.EntityTravelToDimensionEvent;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -18,6 +20,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 
 public class PetWarper {
@@ -27,23 +30,8 @@ public class PetWarper {
     // Store pet information when they become unloaded
     private Map<UUID, PetInfo> petInfoMap = new HashMap<>();
 
-    // Teleport threshold distance squared (12 blocks squared = 144.0D)
-    private static final double TELEPORT_THRESHOLD_SQ = 144.0D;
-
-    // A class to store pet information
-    private static class PetInfo {
-        UUID ownerId;
-        int dimension;
-        double lastX, lastY, lastZ;
-
-        PetInfo(UUID ownerId, int dimension, double x, double y, double z) {
-            this.ownerId = ownerId;
-            this.dimension = dimension;
-            this.lastX = x;
-            this.lastY = y;
-            this.lastZ = z;
-        }
-    }
+    // Teleport threshold distance squared (32 blocks squared = 1024.0D)
+    private static final double TELEPORT_THRESHOLD_SQ = 1024.0D;
 
     // Every tick
     @SubscribeEvent
@@ -79,19 +67,17 @@ public class PetWarper {
             UUID petId = pet.getUniqueID();
             currentLoadedPets.add(petId);
 
-            // Store pet info for potential future teleportation
+            // Store pet info for future teleportation
             if (pet.getOwner() != null) {
                 petInfoMap.put(petId, new PetInfo(
                         pet.getOwner().getUniqueID(),
                         pet.dimension,
-                        pet.posX, pet.posY, pet.posZ));
+                        pet.posX, pet.posZ));
             }
 
             // If this loop found the pet, this means the pet is loaded. Hence, remove it
             // from the unloaded pets set
-            if (unloadedPets.contains(petId)) {
-                unloadedPets.remove(petId);
-            }
+            unloadedPets.remove(petId);
         }
 
         // Find pets that were previously loaded but are no longer loaded
@@ -137,11 +123,9 @@ public class PetWarper {
             if (petWorld == null)
                 continue;
 
-            // Load the chunk where the pet was last seen
+            // Forceload the chunk where the pet was last seen
             int chunkX = MathHelper.floor(petInfo.lastX) >> 4;
             int chunkZ = MathHelper.floor(petInfo.lastZ) >> 4;
-
-            // Force load the chunk if not already loaded
             boolean wasLoaded = petWorld.getChunkProvider().chunkExists(chunkX, chunkZ);
             Chunk chunk = petWorld.getChunkFromChunkCoords(chunkX, chunkZ);
 
@@ -151,20 +135,26 @@ public class PetWarper {
             if (pet != null) {
                 // Cross-dimensional teleportation if needed
                 if (pet.dimension != owner.dimension) {
-                    pet.changeDimension(owner.dimension);
+                    if (pet.getLastPortalVec() == null) {
+                        pet.setPortal(pet.getPosition());
+                    }
+                    changePetDimension(pet, owner.dimension);
                 }
 
                 // Check if we need to teleport the pet to its owner
                 double distanceSq = pet.getDistanceSq(owner);
                 if (distanceSq >= TELEPORT_THRESHOLD_SQ) {
                     // Teleport logic similar to EntityAIFollowOwner
-                    teleportPetToOwner(pet, owner);
-                    teleportedPets.add(petId);
+
+                    boolean isTeleported = teleportPetToOwner(pet, owner);
+                    if (isTeleported) {
+                        teleportedPets.add(petId);
+                    }
                 }
             }
 
-            // Only unload the chunk if we loaded it and it's not in the spawn area
-            if (!wasLoaded && !isChunkInSpawnArea(petWorld, chunkX, chunkZ)) {
+            // Only unload the chunk if we loaded it
+            if (!wasLoaded) {
                 // Allow the chunk to unload
                 petWorld.getChunkProvider().queueUnload(chunk);
             }
@@ -172,6 +162,17 @@ public class PetWarper {
 
         // Remove teleported pets from unloaded pets list
         unloadedPets.removeAll(teleportedPets);
+    }
+
+    // Custom teleport function while preventing portal entry
+    private void changePetDimension(EntityTameable pet, int dimension) {
+        pet.getEntityData().setBoolean("PetLoad_AllowDimChange", true);
+
+        MinecraftServer server = pet.getEntityWorld().getMinecraftServer();
+        WorldServer targetWorld = server.getWorld(dimension);
+        CustomPortalLessTeleporter teleporter = new CustomPortalLessTeleporter(targetWorld);
+
+        pet.changeDimension(dimension, teleporter);
     }
 
     private EntityTameable findPetInLoadedChunk(WorldServer world, UUID petId) {
@@ -183,41 +184,37 @@ public class PetWarper {
         return null;
     }
 
-    private boolean isChunkInSpawnArea(WorldServer world, int chunkX, int chunkZ) {
-        BlockPos spawn = world.getSpawnPoint();
-        int spawnChunkX = spawn.getX() >> 4;
-        int spawnChunkZ = spawn.getZ() >> 4;
-        int spawnRadius = world.getMinecraftServer().getSpawnProtectionSize();
+    private boolean teleportPetToOwner(EntityTameable pet, EntityPlayer owner) {
+        // Adapted from EntityAIFollowOwner vanilla behavior
+        int i = MathHelper.floor(owner.posX) - 2, j = MathHelper.floor(owner.posZ) - 2,
+                k = MathHelper.floor(owner.getEntityBoundingBox().minY);
+        Random random = new Random(); // Added randomness
+        double lastValidX = -1, lastValidY = -1, lastValidZ = -1;
 
-        return Math.abs(chunkX - spawnChunkX) <= spawnRadius &&
-                Math.abs(chunkZ - spawnChunkZ) <= spawnRadius;
-    }
-
-    private void teleportPetToOwner(EntityTameable pet, EntityPlayer owner) {
-        // Logic adapted from EntityAIFollowOwner
-        int i = MathHelper.floor(owner.posX) - 2;
-        int j = MathHelper.floor(owner.posZ) - 2;
-        int k = MathHelper.floor(owner.getEntityBoundingBox().minY);
-
-        // Try to find a suitable position around the owner
         for (int l = 0; l <= 4; ++l) {
             for (int i1 = 0; i1 <= 4; ++i1) {
-                if ((l < 1 || i1 < 1 || l > 3 || i1 > 3) &&
-                        isTeleportFriendlyLocation(owner.world, i, j, k, l, i1)) {
-                    // Teleport the pet
-                    pet.setLocationAndAngles(
-                            (double) ((float) (i + l) + 0.5F),
-                            (double) k,
-                            (double) ((float) (j + i1) + 0.5F),
-                            pet.rotationYaw,
-                            pet.rotationPitch);
-
-                    // Clear any active pathfinding
-                    pet.getNavigator().clearPath();
-                    return;
+                if ((l < 1 || i1 < 1 || l > 3 || i1 > 3) && isTeleportFriendlyLocation(owner.world, i, j, k, l, i1)) {
+                    // 10% chance to accept this teleport
+                    if (random.nextFloat() <= 0.10) {
+                        pet.setLocationAndAngles(i + l + 0.5F, k, j + i1 + 0.5F, pet.rotationYaw, pet.rotationPitch);
+                        pet.getNavigator().clearPath();
+                        return true;
+                    }
+                    // Save known good location if chance fails
+                    lastValidX = i + l + 0.5F;
+                    lastValidY = k;
+                    lastValidZ = j + i1 + 0.5F;
                 }
             }
         }
+        // If we got unlucky with the 10%, teleport to a known good location
+        if (lastValidX != -1 && lastValidY != -1 && lastValidZ != -1) {
+            pet.setLocationAndAngles(lastValidX, lastValidY, lastValidZ, pet.rotationYaw, pet.rotationPitch);
+            pet.getNavigator().clearPath();
+            return true;
+        }
+
+        return false;
     }
 
     private boolean isTeleportFriendlyLocation(World world, int xBase, int zBase, int y, int xOffset, int zOffset) {
@@ -251,4 +248,56 @@ public class PetWarper {
     private boolean isSitting(EntityTameable entity) {
         return entity.isSitting();
     }
+
+    // A class to store pet information
+    private static class PetInfo {
+        UUID ownerId;
+        int dimension;
+        double lastX, lastZ;
+
+        PetInfo(UUID ownerId, int dimension, double x, double z) {
+            this.ownerId = ownerId;
+            this.dimension = dimension;
+            this.lastX = x;
+            this.lastZ = z;
+        }
+    }
+
+    @SubscribeEvent
+    public void onEntityTravelToDimension(EntityTravelToDimensionEvent event) {
+        Entity entity = event.getEntity();
+
+        // Block dimension changes for pets
+        if (entity instanceof EntityTameable) {
+            if (!entity.getEntityData().getBoolean("PetLoad_AllowDimChange")) {
+                event.setCanceled(true);
+            }
+            entity.getEntityData().setBoolean("PetLoad_AllowDimChange", false);
+        }
+    }
+
+    // Forge hates teleporting mobs without a portal, so we have to do it "manually"
+    public class CustomPortalLessTeleporter extends Teleporter {
+        public CustomPortalLessTeleporter(WorldServer world) {
+            super(world);
+        }
+
+        @Override
+        public void placeInPortal(Entity entity, float rotationYaw) {
+            BlockPos pos = new BlockPos(entity);
+            entity.setPositionAndUpdate(pos.getX(), pos.getY(), pos.getZ());
+        }
+
+        @Override
+        public boolean placeInExistingPortal(Entity entity, float rotationYaw) {
+            placeInPortal(entity, rotationYaw);
+            return true;
+        }
+
+        @Override
+        public boolean makePortal(Entity entity) {
+            return true;
+        }
+    }
+
 }
