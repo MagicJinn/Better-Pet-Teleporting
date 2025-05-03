@@ -66,18 +66,21 @@ public class PetWarper {
 
             UUID petId = pet.getUniqueID();
             currentLoadedPets.add(petId);
-
-            // Store pet info for future teleportation
-            if (pet.getOwner() != null) {
-                petInfoMap.put(petId, new PetInfo(
-                        pet.getOwner().getUniqueID(),
-                        pet.dimension,
-                        pet.posX, pet.posZ));
-            }
-
-            // If this loop found the pet, this means the pet is loaded. Hence, remove it
-            // from the unloaded pets set
             unloadedPets.remove(petId);
+
+            // Store or update the pet info to be used if the pet is unloaded
+            PetInfo petInfo = petInfoMap.get(petId);
+            if (petInfo == null ||
+                    petInfo.dimension != pet.dimension ||
+                    petInfo.lastX != pet.posX ||
+                    petInfo.lastZ != pet.posZ) {
+                petInfoMap.put(
+                        petId,
+                        new PetInfo(
+                                pet.getOwner().getUniqueID(),
+                                pet.dimension,
+                                pet.posX, pet.posZ));
+            }
         }
 
         // Find pets that were previously loaded but are no longer loaded
@@ -221,18 +224,12 @@ public class PetWarper {
         BlockPos blockpos = new BlockPos(xBase + xOffset, y - 1, zBase + zOffset);
 
         // Check if there's solid ground to stand on
-        if (!world.getBlockState(blockpos).isOpaqueCube()) {
+        if (!world.getBlockState(blockpos).isNormalCube()) {
             return false;
         }
 
         // Check if there's space for the pet (2 blocks of air)
-        BlockPos blockpos1 = blockpos.up();
-        if (!world.isAirBlock(blockpos1)) {
-            return false;
-        }
-
-        BlockPos blockpos2 = blockpos1.up();
-        return world.isAirBlock(blockpos2);
+        return world.isAirBlock(blockpos.up()) && world.isAirBlock(blockpos.up(2));
     }
 
     // Helper methods to check if the entity is tamed, leashed, and sitting
