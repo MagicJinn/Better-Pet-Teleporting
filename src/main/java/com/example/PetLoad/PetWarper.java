@@ -36,10 +36,15 @@ public class PetWarper {
     // Every tick
     @SubscribeEvent
     public void onWorldTick(TickEvent.WorldTickEvent event) {
+        World world = event.world;
+
+        // Execute every 20 ticks
+        if (world.getWorldInfo().getWorldTotalTime() % 5 != 0)
+            return;
+
         if (event.phase != TickEvent.Phase.END)
             return;
 
-        World world = event.world;
         if (world.isRemote)
             return; // Only run on server side
 
@@ -61,6 +66,8 @@ public class PetWarper {
             // Sitting mobs should stay put like good girls
             boolean isSitting = isSitting(pet);
             if (isWild || isLeashed || isSitting) {
+                System.out.println("Pet isLeashed: " + isLeashed + ", isSitting: " + isSitting);
+                petInfoMap.remove(entity.getUniqueID()); // ??
                 continue;
             }
 
