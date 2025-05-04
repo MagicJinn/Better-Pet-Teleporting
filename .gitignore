@@ -24,3 +24,6 @@ run
 # Files from Forge MDK
 forge*changelog.txt
 /.vscode
+
+# build.bat simply sets my JDK to 1.8 and runs the build script
+build.bat
