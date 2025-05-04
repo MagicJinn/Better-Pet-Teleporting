@@ -1,4 +1,4 @@
-package com.example.BetterPetTeleporting;
+package com.BetterPetTeleporting;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.EntityTameable;

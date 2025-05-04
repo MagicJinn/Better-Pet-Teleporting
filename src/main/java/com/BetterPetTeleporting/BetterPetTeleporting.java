@@ -1,4 +1,4 @@
-package com.example.BetterPetTeleporting;
+package com.BetterPetTeleporting;
 
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.Mod;
