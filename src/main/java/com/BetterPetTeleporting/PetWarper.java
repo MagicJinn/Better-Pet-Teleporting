@@ -38,10 +38,6 @@ public class PetWarper {
     public void onWorldTick(TickEvent.WorldTickEvent event) {
         World world = event.world;
 
-        // Execute every 20 ticks
-        if (world.getWorldInfo().getWorldTotalTime() % 5 != 0)
-            return;
-
         if (event.phase != TickEvent.Phase.END)
             return;
 
@@ -65,6 +61,7 @@ public class PetWarper {
             boolean isLeashed = isLeashed(pet);
             // Sitting mobs should stay put like good girls
             boolean isSitting = isSitting(pet);
+
             if (isWild || isLeashed || isSitting) {
                 petInfoMap.remove(entity.getUniqueID()); // ??
                 continue;
@@ -143,18 +140,22 @@ public class PetWarper {
 
             if (pet != null) {
                 // Cross-dimensional teleportation if needed
+                boolean needTeleport = false;
                 if (pet.dimension != owner.dimension) {
                     if (pet.getLastPortalVec() == null) {
                         pet.setPortal(pet.getPosition());
                     }
                     changePetDimension(pet, owner.dimension);
+                    // If pet changed dimensions, always teleport to the owner
+                    needTeleport = true;
+                } else {
+                    // If the pet didn't change dimensions, teleport based on the distance
+                    double distanceSq = pet.getDistanceSq(owner);
+                    needTeleport = distanceSq >= TELEPORT_THRESHOLD_SQ;
                 }
 
                 // Check if we need to teleport the pet to its owner
-                double distanceSq = pet.getDistanceSq(owner);
-                if (distanceSq >= TELEPORT_THRESHOLD_SQ) {
-                    // Teleport logic similar to EntityAIFollowOwner
-
+                if (needTeleport) {
                     boolean isTeleported = teleportPetToOwner(pet, owner);
                     if (isTeleported) {
                         teleportedPets.add(petId);
@@ -241,7 +242,7 @@ public class PetWarper {
     // Helper methods to check if the entity is tamed, leashed, and sitting
     // These should only be able to run if the entity is EntityTamable
     private boolean isTamed(EntityTameable entity) {
-        return entity.isTamed();
+        return entity.isTamed() && entity.getOwner() != null;
     }
 
     private boolean isLeashed(EntityTameable entity) {
