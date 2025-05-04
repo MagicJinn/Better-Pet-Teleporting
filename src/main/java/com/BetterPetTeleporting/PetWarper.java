@@ -1,10 +1,12 @@
 package com.BetterPetTeleporting;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.passive.EntityTameable;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.management.PlayerList;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.Teleporter;
@@ -24,9 +26,6 @@ import java.util.Random;
 import java.util.UUID;
 
 public class PetWarper {
-    private HashSet<UUID> loadedPets = new HashSet<>();
-    private HashSet<UUID> unloadedPets = new HashSet<>();
-
     // Store pet information when they become unloaded
     private Map<UUID, PetInfo> petInfoMap = new HashMap<>();
 
@@ -36,149 +35,136 @@ public class PetWarper {
     // Every tick
     @SubscribeEvent
     public void onWorldTick(TickEvent.WorldTickEvent event) {
-        World world = event.world;
-
-        if (event.phase != TickEvent.Phase.END)
+        if (event.phase != TickEvent.Phase.END || event.world.isRemote)
             return;
 
-        if (world.isRemote)
-            return; // Only run on server side
-
-        // Get all loaded entities
+        World world = event.world;
         List<Entity> entities = world.loadedEntityList;
         HashSet<UUID> currentLoadedPets = new HashSet<>();
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        PlayerList playerList = server.getPlayerList();
 
+        // Update pet info and loaded status
         for (Entity entity : entities) {
-            // Skip non tameable entities
+            // Skip non tameable pets
             if (!(entity instanceof EntityTameable))
                 continue;
 
+            // When a pet's owner changes dimensions, the pet may be reset to an ownerless,
+            // sitting state, preventing teleportation. To avoid this, pets are registered
+            // for teleportation before a teleport checks occur. This ensures that the
+            // pet's teleportation eligibility is properly evaluated before being
+            // unregistered.
+
             EntityTameable pet = (EntityTameable) entity;
+            UUID petId = pet.getUniqueID();
 
-            // Wild mobs should remain so
-            boolean isWild = !isTamed(pet);
-            // Leashed mobs should be patient like good boys
-            boolean isLeashed = isLeashed(pet);
-            // Sitting mobs should stay put like good girls
-            boolean isSitting = isSitting(pet);
-
-            if (isWild || isLeashed || isSitting) {
-                petInfoMap.remove(entity.getUniqueID()); // ??
+            // Check pet eligability
+            if (!petTeleportEligable(pet)) {
+                EntityLivingBase owner = pet.getOwner();
+                if (owner != null) {
+                    int ownerDimension = playerList.getPlayerByUUID(owner.getUniqueID()).dimension;
+                    // If teleport check fails, check if the pet is still in the same dimension
+                    // If not, this is 100% what caused it to fail, so we ignore it
+                    // I recognize the Council has made a decision.
+                    // But given that it's a stupid-ass decision, I have elected to ignore it.
+                    if (ownerDimension == pet.dimension) {
+                        petInfoMap.remove(petId);
+                    }
+                }
                 continue;
             }
 
-            UUID petId = pet.getUniqueID();
             currentLoadedPets.add(petId);
-            unloadedPets.remove(petId);
 
-            // Store or update the pet info to be used if the pet is unloaded
             PetInfo petInfo = petInfoMap.get(petId);
-            if (petInfo == null ||
-                    petInfo.dimension != pet.dimension ||
-                    petInfo.lastX != pet.posX ||
-                    petInfo.lastZ != pet.posZ) {
-                petInfoMap.put(
-                        petId,
-                        new PetInfo(
-                                pet.getOwner().getUniqueID(),
-                                pet.dimension,
-                                pet.posX, pet.posZ));
+            if (petInfo == null || petInfo.dimension != pet.dimension ||
+                    petInfo.lastX != pet.posX || petInfo.lastZ != pet.posZ) {
+                Entity ownerEntity = pet.getOwner();
+                if (ownerEntity != null) {
+                    UUID owner = ownerEntity.getUniqueID();
+
+                    if (owner != null) {
+                        petInfoMap.put(petId, new PetInfo(
+                                owner, pet.dimension,
+                                pet.posX,
+                                pet.posZ,
+                                true));
+                    }
+                }
+            } else {
+                petInfo.isLoaded = true; // Update existing entry
             }
         }
 
-        // Find pets that were previously loaded but are no longer loaded
-        for (UUID previouslyLoadedPet : loadedPets) {
-            if (!currentLoadedPets.contains(previouslyLoadedPet)) {
-                unloadedPets.add(previouslyLoadedPet);
+        // Mark pets not currently loaded as unloaded
+        for (Map.Entry<UUID, PetInfo> entry : petInfoMap.entrySet()) {
+            UUID petId = entry.getKey();
+            PetInfo petInfo = entry.getValue();
+            if (!currentLoadedPets.contains(petId)) {
+                petInfo.isLoaded = false;
             }
         }
-
-        // Update loaded pets set
-        loadedPets = currentLoadedPets;
 
         // Handle teleportation for unloaded pets
-        handleUnloadedPets(world);
+        handleUnloadedPets(world, server);
     }
 
-    private void handleUnloadedPets(World world) {
-        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
-        if (server == null)
+    private void handleUnloadedPets(World world, MinecraftServer server) {
+        if (world == null || server == null)
             return;
 
         HashSet<UUID> teleportedPets = new HashSet<>();
 
-        for (UUID petId : unloadedPets) {
-            PetInfo petInfo = petInfoMap.get(petId);
-            if (petInfo == null)
+        for (Map.Entry<UUID, PetInfo> entry : petInfoMap.entrySet()) {
+            UUID petId = entry.getKey();
+            PetInfo petInfo = entry.getValue();
+
+            if (petInfo.isLoaded)
                 continue;
 
-            // Find the owner player
-            EntityPlayerMP owner = null;
-            for (EntityPlayer player : server.getPlayerList().getPlayers()) {
-                if (player.getUniqueID().equals(petInfo.ownerId)) {
-                    owner = (EntityPlayerMP) player;
-                    break;
-                }
+            EntityPlayerMP owner = server.getPlayerList().getPlayerByUUID(petInfo.ownerId);
+            if (owner == null) {
+                continue;
             }
 
-            if (owner == null)
-                continue;
-
-            // Get the world server for the pet's dimension
             WorldServer petWorld = server.getWorld(petInfo.dimension);
-            if (petWorld == null)
+            if (petWorld == null) {
                 continue;
+            }
 
-            // Forceload the chunk where the pet was last seen
             int chunkX = MathHelper.floor(petInfo.lastX) >> 4;
             int chunkZ = MathHelper.floor(petInfo.lastZ) >> 4;
             boolean wasLoaded = petWorld.getChunkProvider().chunkExists(chunkX, chunkZ);
             Chunk chunk = petWorld.getChunkFromChunkCoords(chunkX, chunkZ);
 
-            // Look for the pet in this chunk
             EntityTameable pet = findPetInLoadedChunk(petWorld, petId);
-
             if (pet != null) {
-                // Cross-dimensional teleportation if needed
-                boolean needTeleport = false;
-                if (pet.dimension != owner.dimension) {
-                    if (pet.getLastPortalVec() == null) {
-                        pet.setPortal(pet.getPosition());
-                    }
-                    changePetDimension(pet, owner.dimension);
-                    // If pet changed dimensions, always teleport to the owner
-                    needTeleport = true;
-                } else {
-                    // If the pet didn't change dimensions, teleport based on the distance
-                    double distanceSq = pet.getDistanceSq(owner);
-                    needTeleport = distanceSq >= TELEPORT_THRESHOLD_SQ;
-                }
+                // if (!petTeleportEligable(pet))
+                // continue;
 
-                // Check if we need to teleport the pet to its owner
+                boolean needTeleport = pet.dimension != owner.dimension ||
+                        pet.getDistanceSq(owner) >= TELEPORT_THRESHOLD_SQ;
                 if (needTeleport) {
-                    boolean isTeleported = teleportPetToOwner(pet, owner);
-                    if (isTeleported) {
+                    if (pet.dimension != owner.dimension) {
+                        changePetDimension(pet, owner.dimension, server);
+                    }
+                    if (teleportPetToOwner(pet, owner)) {
                         teleportedPets.add(petId);
                     }
                 }
             }
 
-            // Only unload the chunk if we loaded it
             if (!wasLoaded) {
-                // Allow the chunk to unload
                 petWorld.getChunkProvider().queueUnload(chunk);
             }
         }
-
-        // Remove teleported pets from unloaded pets list
-        unloadedPets.removeAll(teleportedPets);
     }
 
     // Custom teleport function while preventing portal entry
-    private void changePetDimension(EntityTameable pet, int dimension) {
+    private void changePetDimension(EntityTameable pet, int dimension, MinecraftServer server) {
         pet.getEntityData().setBoolean("BPT_AllowDimChange", true);
 
-        MinecraftServer server = pet.getEntityWorld().getMinecraftServer();
         WorldServer targetWorld = server.getWorld(dimension);
         CustomPortalLessTeleporter teleporter = new CustomPortalLessTeleporter(targetWorld);
 
@@ -200,19 +186,22 @@ public class PetWarper {
                 k = MathHelper.floor(owner.getEntityBoundingBox().minY);
         Random random = new Random(); // Added randomness
         double lastValidX = -1, lastValidY = -1, lastValidZ = -1;
+        double teleportYOffset = +0.1f; // Prevent wolf from falling through the floor
 
         for (int l = 0; l <= 4; ++l) {
             for (int i1 = 0; i1 <= 4; ++i1) {
-                if ((l < 1 || i1 < 1 || l > 3 || i1 > 3) && isTeleportFriendlyLocation(owner.world, i, j, k, l, i1)) {
+                if ((l < 1 || i1 < 1 || l > 3 || i1 > 3)
+                        && isTeleportFriendlyLocation(owner.world, i, j, k, l, i1, pet)) {
                     // 10% chance to accept this teleport
                     if (random.nextFloat() <= 0.10) {
-                        pet.setLocationAndAngles(i + l + 0.5F, k, j + i1 + 0.5F, pet.rotationYaw, pet.rotationPitch);
+                        pet.setLocationAndAngles(i + l + 0.5F, k + teleportYOffset, j + i1 + 0.5F, pet.rotationYaw,
+                                pet.rotationPitch);
                         pet.getNavigator().clearPath();
                         return true;
                     }
                     // Save known good location if chance fails
                     lastValidX = i + l + 0.5F;
-                    lastValidY = k;
+                    lastValidY = k + teleportYOffset;
                     lastValidZ = j + i1 + 0.5F;
                 }
             }
@@ -227,17 +216,27 @@ public class PetWarper {
         return false;
     }
 
-    private boolean isTeleportFriendlyLocation(World world, int xBase, int zBase, int y, int xOffset, int zOffset) {
-        BlockPos blockpos = new BlockPos(xBase + xOffset, y - 1, zBase + zOffset);
+    private boolean isTeleportFriendlyLocation(World world, int xBase, int zBase, int y, int xOffset, int zOffset,
+            Entity pet) {
+        BlockPos basePos = new BlockPos(xBase + xOffset, y - 1, zBase + zOffset);
 
-        // Check if there's solid ground to stand on
-        if (!world.getBlockState(blockpos).isNormalCube()) {
+        if (!world.getBlockState(basePos).isOpaqueCube()) {
             return false;
         }
 
-        // Check if there's space for the pet (2 blocks of air)
-        return world.isAirBlock(blockpos.up()) && world.isAirBlock(blockpos.up(2));
+        BlockPos checkPos = basePos.up(); // Start 1 block above ground
+        double height = pet.height; // Use the height of the pet to determine how many blocks above ground to check
+        int requiredAirBlocks = (int) Math.ceil(height) + 1; // +1 ensures one full block above the pet
+
+        for (int i = 0; i < requiredAirBlocks; i++) {
+            if (!world.isAirBlock(checkPos.up(i))) {
+                return false;
+            }
+        }
+
+        return true;
     }
+
 
     // Helper methods to check if the entity is tamed, leashed, and sitting
     // These should only be able to run if the entity is EntityTamable
@@ -253,17 +252,26 @@ public class PetWarper {
         return entity.isSitting();
     }
 
+    private boolean petTeleportEligable(EntityTameable entity) {
+        boolean isTamed = isTamed(entity);
+        boolean isLeashed = isLeashed(entity);
+        boolean isSitting = isSitting(entity);
+        return !(!isTamed || isLeashed || isSitting);
+    }
+
     // A class to store pet information
     private static class PetInfo {
         UUID ownerId;
         int dimension;
         double lastX, lastZ;
+        boolean isLoaded; // New field
 
-        PetInfo(UUID ownerId, int dimension, double x, double z) {
+        PetInfo(UUID ownerId, int dimension, double x, double z, boolean isLoaded) {
             this.ownerId = ownerId;
             this.dimension = dimension;
             this.lastX = x;
             this.lastZ = z;
+            this.isLoaded = isLoaded;
         }
     }
 
