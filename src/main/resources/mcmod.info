@@ -8,7 +8,7 @@
     "url": "",
     "updateUrl": "",
     "authorList": ["MagicJinn"],
-    "logoFile": "",
+    "logoFile": "icon.png",
     "screenshots": [],
     "dependencies": []
   }
