@@ -17,6 +17,7 @@ import net.minecraftforge.event.entity.EntityTravelToDimensionEvent;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import javax.annotation.Nonnull;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -60,16 +61,19 @@ public class PetWarper {
             UUID petId = pet.getUniqueID();
 
             // Check pet eligability
-            if (!petTeleportEligable(pet)) {
+            if (!petTeleportEligible(pet)) {
                 EntityLivingBase owner = pet.getOwner();
                 if (owner != null) {
-                    int ownerDimension = playerList.getPlayerByUUID(owner.getUniqueID()).dimension;
-                    // If teleport check fails, check if the pet is still in the same dimension
-                    // If not, this is 100% what caused it to fail, so we ignore it
-                    // I recognize the Council has made a decision.
-                    // But given that it's a stupid-ass decision, I have elected to ignore it.
-                    if (ownerDimension == pet.dimension) {
-                        petInfoMap.remove(petId);
+                    EntityPlayerMP ownerPlayer = playerList.getPlayerByUUID(owner.getUniqueID());
+                    if (ownerPlayer != null) {
+                        int ownerDimension = ownerPlayer.dimension;
+                        // If teleport check fails, check if the pet is still in the same dimension
+                        // If not, this is 100% what caused it to fail, so we ignore it
+                        // I recognize the Council has made a decision.
+                        // But given that it's a stupid-ass decision, I have elected to ignore it.
+                        if (ownerDimension == pet.dimension) {
+                            petInfoMap.remove(petId);
+                        }
                     }
                 }
                 continue;
@@ -108,6 +112,11 @@ public class PetWarper {
 
         // Handle teleportation for unloaded pets
         handleUnloadedPets(world, server);
+
+        if (world.getTotalWorldTime() % 1200 == 0) { // Clean up petInfoMap every minute
+            petInfoMap.entrySet()
+                    .removeIf(entry -> server.getPlayerList().getPlayerByUUID(entry.getValue().ownerId) == null);
+        }
     }
 
     private void handleUnloadedPets(World world, MinecraftServer server) {
@@ -140,9 +149,6 @@ public class PetWarper {
 
             EntityTameable pet = findPetInLoadedChunk(petWorld, petId);
             if (pet != null) {
-                // if (!petTeleportEligable(pet))
-                // continue;
-
                 boolean needTeleport = pet.dimension != owner.dimension ||
                         pet.getDistanceSq(owner) >= TELEPORT_THRESHOLD_SQ;
                 if (needTeleport) {
@@ -184,31 +190,30 @@ public class PetWarper {
         // Adapted from EntityAIFollowOwner vanilla behavior
         int i = MathHelper.floor(owner.posX) - 2, j = MathHelper.floor(owner.posZ) - 2,
                 k = MathHelper.floor(owner.getEntityBoundingBox().minY);
-        Random random = new Random(); // Added randomness
-        double lastValidX = -1, lastValidY = -1, lastValidZ = -1;
+        Random random = new Random();
         double teleportYOffset = +0.1f; // Prevent wolf from falling through the floor
+
+        // Collect all valid teleport locations first
+        List<double[]> validLocations = new java.util.ArrayList<>();
 
         for (int l = 0; l <= 4; ++l) {
             for (int i1 = 0; i1 <= 4; ++i1) {
                 if ((l < 1 || i1 < 1 || l > 3 || i1 > 3)
                         && isTeleportFriendlyLocation(owner.world, i, j, k, l, i1, pet)) {
-                    // 10% chance to accept this teleport
-                    if (random.nextFloat() <= 0.10) {
-                        pet.setLocationAndAngles(i + l + 0.5F, k + teleportYOffset, j + i1 + 0.5F, pet.rotationYaw,
-                                pet.rotationPitch);
-                        pet.getNavigator().clearPath();
-                        return true;
-                    }
-                    // Save known good location if chance fails
-                    lastValidX = i + l + 0.5F;
-                    lastValidY = k + teleportYOffset;
-                    lastValidZ = j + i1 + 0.5F;
+                    validLocations.add(new double[] {
+                            i + l + 0.5F,
+                            k + teleportYOffset,
+                            j + i1 + 0.5F
+                    });
                 }
             }
         }
-        // If we got unlucky with the 10%, teleport to a known good location
-        if (lastValidX != -1 && lastValidY != -1 && lastValidZ != -1) {
-            pet.setLocationAndAngles(lastValidX, lastValidY, lastValidZ, pet.rotationYaw, pet.rotationPitch);
+
+        // If we have valid locations, randomly select one
+        if (!validLocations.isEmpty()) {
+            double[] selectedLocation = validLocations.get(random.nextInt(validLocations.size()));
+            pet.setLocationAndAngles(selectedLocation[0], selectedLocation[1], selectedLocation[2],
+                    pet.rotationYaw, pet.rotationPitch);
             pet.getNavigator().clearPath();
             return true;
         }
@@ -239,7 +244,7 @@ public class PetWarper {
 
 
     // Helper methods to check if the entity is tamed, leashed, and sitting
-    // These should only be able to run if the entity is EntityTamable
+    // These should only be able to run if the entity is EntityTameable
     private boolean isTamed(EntityTameable entity) {
         return entity.isTamed() && entity.getOwner() != null;
     }
@@ -252,7 +257,7 @@ public class PetWarper {
         return entity.isSitting();
     }
 
-    private boolean petTeleportEligable(EntityTameable entity) {
+    private boolean petTeleportEligible(EntityTameable entity) {
         boolean isTamed = isTamed(entity);
         boolean isLeashed = isLeashed(entity);
         boolean isSitting = isSitting(entity);
@@ -295,19 +300,19 @@ public class PetWarper {
         }
 
         @Override
-        public void placeInPortal(Entity entity, float rotationYaw) {
+        public void placeInPortal(@Nonnull Entity entity, float rotationYaw) {
             BlockPos pos = new BlockPos(entity);
             entity.setPositionAndUpdate(pos.getX(), pos.getY(), pos.getZ());
         }
 
         @Override
-        public boolean placeInExistingPortal(Entity entity, float rotationYaw) {
+        public boolean placeInExistingPortal(@Nonnull Entity entity, float rotationYaw) {
             placeInPortal(entity, rotationYaw);
             return true;
         }
 
         @Override
-        public boolean makePortal(Entity entity) {
+        public boolean makePortal(@Nonnull Entity entity) {
             return true;
         }
     }
