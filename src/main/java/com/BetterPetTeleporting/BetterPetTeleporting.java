@@ -5,7 +5,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.Logger;
 
-@Mod(modid = BetterPetTeleporting.MODID, name = BetterPetTeleporting.NAME, version = BetterPetTeleporting.VERSION)
+@Mod(modid = BetterPetTeleporting.MODID, name = BetterPetTeleporting.NAME, version = BetterPetTeleporting.VERSION, acceptableRemoteVersions = "*")
 public class BetterPetTeleporting {
     public static final String MODID = "betterpetteleporting";
     public static final String NAME = "Better Pet Teleporting";
