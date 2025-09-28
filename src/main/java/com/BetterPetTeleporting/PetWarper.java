@@ -30,8 +30,7 @@ public class PetWarper {
     // Store pet information when they become unloaded
     private Map<UUID, PetInfo> petInfoMap = new HashMap<>();
 
-    // Teleport threshold distance squared (32 blocks squared = 1024.0D)
-    private static final double TELEPORT_THRESHOLD_SQ = 1024.0D;
+    private static final double TELEPORT_THRESHOLD_SQ = 12 ^ 2;
 
     // Every tick
     @SubscribeEvent
@@ -40,6 +39,10 @@ public class PetWarper {
             return;
 
         World world = event.world;
+
+        if (world.getTotalWorldTime() % 5L != 0L) // Run every second
+            return;
+
         List<Entity> entities = world.loadedEntityList;
         HashSet<UUID> currentLoadedPets = new HashSet<>();
         MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();

@@ -3,7 +3,7 @@
     "modid": "betterpetteleporting",
     "name": "Better Pet Teleporting",
     "description": "Vastly improve pet teleportation logic so you don't lose them. Supports all pets across all dimensions.",
-    "version": "1.2",
+    "version": "1.3",
     "mcversion": "1.12.2",
     "url": "",
     "updateUrl": "",
