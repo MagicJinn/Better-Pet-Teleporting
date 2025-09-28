@@ -7,6 +7,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.management.PlayerList;
+import net.minecraft.util.DamageSource;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.Teleporter;
@@ -14,6 +15,7 @@ import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.event.entity.EntityTravelToDimensionEvent;
+import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -30,7 +32,7 @@ public class PetWarper {
     // Store pet information when they become unloaded
     private Map<UUID, PetInfo> petInfoMap = new HashMap<>();
 
-    private static final double TELEPORT_THRESHOLD_SQ = 12 ^ 2;
+    private static final double TELEPORT_THRESHOLD_SQ = Math.pow(12, 2);
 
     // Every tick
     @SubscribeEvent
@@ -320,4 +322,17 @@ public class PetWarper {
         }
     }
 
+    @SubscribeEvent
+    public void onLivingHurt(LivingHurtEvent event) {
+        Entity pet = event.getEntity();
+        if (pet instanceof EntityTameable) {
+            DamageSource source = event.getSource();
+            if (source == DamageSource.CRAMMING ||
+                    source == DamageSource.IN_WALL ||
+                    source == DamageSource.FALL ||
+                    source == DamageSource.OUT_OF_WORLD) {
+                event.setCanceled(true);
+            }
+        }
+    }
 }
