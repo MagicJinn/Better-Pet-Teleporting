@@ -2,6 +2,7 @@ package com.BetterPetTeleporting;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.EntityTracker;
 import net.minecraft.entity.passive.EntityTameable;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -138,6 +139,9 @@ public class PetWarper {
                     // Follow-up positioning must use that returned entity.
                     EntityTameable petToMove = pet;
                     if (crossDim) {
+                        // Owner missing from this world makes AISit treat the pet as ownerless
+                        // and sit. Clear before NBT is copied into the new-dimension entity.
+                        forceStanding(petToMove);
                         petToMove = changePetDimension(pet, owner.dimension, server);
                         if (petToMove == null) {
                             if (!wasLoaded) {
@@ -151,6 +155,11 @@ public class PetWarper {
                     }
 
                     teleportPetToOwner(petToMove, owner);
+                    forceStanding(petToMove);
+                    resyncPetToClients(petToMove);
+                    petInfoMap.put(petToMove.getUniqueID(), new PetInfo(
+                            petInfo.ownerId, petToMove.dimension,
+                            petToMove.posX, petToMove.posZ, true));
                 }
             }
 
@@ -205,13 +214,40 @@ public class PetWarper {
 
         if (!validLocations.isEmpty()) {
             double[] selectedLocation = validLocations.get(random.nextInt(validLocations.size()));
-            pet.setLocationAndAngles(selectedLocation[0], selectedLocation[1], selectedLocation[2],
-                    pet.rotationYaw, pet.rotationPitch);
+            // Using setPositionAndUpdate ensures the entity tracker is notified. Relying
+            // only on setLocationAndAngles may lead to situations where clients temporarily
+            // can't see the entity after it crosses chunk boundaries.
+            pet.setPositionAndUpdate(selectedLocation[0], selectedLocation[1], selectedLocation[2]);
             pet.getNavigator().clearPath();
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Forces the pet to stand. This is necessary to prevent the pet from sitting
+     * after cross-dimension teleporting.
+     * 
+     * @param pet The pet to force to stand.
+     */
+    private void forceStanding(EntityTameable pet) {
+        pet.setSitting(false);
+        if (pet.getAISit() != null)
+            pet.getAISit().setSitting(false);
+    }
+
+    /**
+     * Resyncs the pet to clients.
+     * 
+     * @param pet The pet to resync.
+     */
+    private void resyncPetToClients(EntityTameable pet) {
+        if (!(pet.world instanceof WorldServer))
+            return;
+        EntityTracker tracker = ((WorldServer) pet.world).getEntityTracker();
+        tracker.untrack(pet);
+        tracker.track(pet);
     }
 
     private boolean isTeleportFriendlyLocation(World world, int xBase, int zBase, int y, int xOffset, int zOffset,
